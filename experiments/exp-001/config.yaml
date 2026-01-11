@@ -1,0 +1,8 @@
+name: exp-001-small-transformer
+description: small test training run for learning purposes
+dataset: data/sample.txt
+epochs: 1
+batch_size: 2
+model:
+  d_model: 64
+  n_heads: 4

@@ -1,0 +1,3 @@
+Hello world this is a small sample.
+This repository contains small data used for unit tests and examples.
+Use larger data downloaded externally per README guidance.
