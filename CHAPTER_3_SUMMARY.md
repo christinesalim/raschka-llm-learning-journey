@@ -80,6 +80,154 @@ self.W_query = nn.Parameter(torch.rand(d_in, d_out))
 
 **Without `nn.Parameter`**: PyTorch would treat it as a regular tensor and wouldn't update it during training.
 
+### Implementation: SelfAttention_v2 (Improved Version)
+
+**Why v2?** While v1 works for learning, it has some limitations:
+
+- Random initialization (`torch.rand`) gives values in [0, 1], which isn't optimal
+- No option for bias terms
+- Manual matrix multiplication instead of using PyTorch's standard layers
+
+**SelfAttention_v2** uses `nn.Linear` instead of `nn.Parameter`:
+
+```python
+class SelfAttention_v2(nn.Module):
+    def __init__(self, d_in, d_out, qkv_bias=False):
+        super().__init__()
+
+        # Use nn.Linear instead of nn.Parameter
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+    def forward(self, x):
+        # Use nn.Linear's __call__ instead of manual @
+        keys = self.W_key(x)        # Instead of: x @ self.W_key
+        queries = self.W_query(x)   # Instead of: x @ self.W_query
+        values = self.W_value(x)    # Instead of: x @ self.W_value
+
+        # Rest is identical to v1
+        attn_scores = queries @ keys.T
+        attn_weights = torch.softmax(
+            attn_scores / keys.shape[-1]**0.5, dim=-1
+        )
+        context_vec = attn_weights @ values
+        return context_vec
+```
+
+### v1 vs v2: Key Differences
+
+| Aspect                    | SelfAttention_v1                | SelfAttention_v2                     |
+| ------------------------- | ------------------------------- | ------------------------------------ |
+| **Weight matrices**       | `nn.Parameter(torch.rand(...))` | `nn.Linear(d_in, d_out)`             |
+| **Initialization**        | Random [0, 1]                   | Xavier uniform (better for training) |
+| **Bias terms**            | No bias                         | Optional bias with `qkv_bias=True`   |
+| **Matrix multiplication** | Manual `x @ self.W_key`         | Automatic `self.W_key(x)`            |
+| **Usage**                 | Learning/educational            | Production-ready                     |
+
+### How nn.Linear Works
+
+When you call `self.W_key(x)`, `nn.Linear` does this internally:
+
+```python
+# What nn.Linear does behind the scenes:
+def forward(self, x):
+    output = x @ self.weight.T  # Note the transpose!
+    if self.bias is not None:
+        output = output + self.bias
+    return output
+```
+
+**Important**: `nn.Linear` stores weights as `[d_out, d_in]` (transposed from v1's `[d_in, d_out]`), but handles the transpose internally so you don't have to worry about it.
+
+### Why nn.Linear is Better
+
+1. **Better Initialization**: Uses Xavier uniform initialization instead of random [0, 1]
+
+   - Xavier initialization: `W ~ Uniform(-sqrt(k), sqrt(k))` where `k = 1/d_in`
+   - Keeps activations and gradients in reasonable ranges
+   - Helps model train faster and more stably
+
+2. **Optional Bias**: Can add learnable bias if needed
+
+   ```python
+   # Without bias (more common in transformers)
+   sa = SelfAttention_v2(d_in=256, d_out=64, qkv_bias=False)
+
+   # With bias (adds expressiveness)
+   sa = SelfAttention_v2(d_in=256, d_out=64, qkv_bias=True)
+   ```
+
+3. **PyTorch Convention**: `nn.Linear` is standard practice
+   - More readable for other PyTorch users
+   - Works seamlessly with PyTorch's optimization and serialization
+   - Efficient implementation optimized in C++
+
+### Matrix Multiplication Comparison
+
+**v1 approach (manual)**:
+
+```python
+self.W_key = nn.Parameter(torch.rand(256, 64))  # [d_in, d_out]
+keys = x @ self.W_key  # [8, 4, 256] @ [256, 64] = [8, 4, 64]
+```
+
+**v2 approach (nn.Linear)**:
+
+```python
+self.W_key = nn.Linear(256, 64, bias=False)  # Creates [64, 256] internally
+keys = self.W_key(x)  # Automatically does: x @ weight.T + bias
+                      # [8, 4, 256] @ [256, 64] = [8, 4, 64]
+```
+
+Both produce the same output shape, but v2 handles the details for you.
+
+### Example Usage
+
+```python
+import torch
+from raschka_llm.self_attention import SelfAttention_v2
+
+# Create sample input
+inputs = torch.tensor([
+    [0.43, 0.15, 0.89],  # Token 1
+    [0.55, 0.87, 0.66],  # Token 2
+    [0.57, 0.85, 0.64],  # Token 3
+    [0.22, 0.58, 0.33],  # Token 4
+])
+
+# Initialize attention layer
+d_in = 3
+d_out = 2
+attention = SelfAttention_v2(d_in, d_out, qkv_bias=False)
+
+# Forward pass
+context_vectors = attention(inputs)
+print(context_vectors.shape)  # [4, 2]
+
+# With bias
+attention_with_bias = SelfAttention_v2(d_in, d_out, qkv_bias=True)
+context_vectors_biased = attention_with_bias(inputs)
+```
+
+### When to Use Each Version
+
+**Use SelfAttention_v1 when**:
+
+- Learning how self-attention works
+- Understanding the math behind transformers
+- Teaching/explaining concepts
+- You want full control over initialization
+
+**Use SelfAttention_v2 when**:
+
+- Building production models
+- Training transformers from scratch
+- Following best practices
+- You want optimal performance
+
+**Real-world transformers** (GPT, BERT, etc.) use the v2 approach with `nn.Linear`.
+
 ---
 
 ## 3. The Forward Pass
@@ -173,6 +321,7 @@ This step has **two critical operations**: scaling and softmax normalization.
 **The Problem**: Dot products grow with dimensionality
 
 When computing `queries @ keys.T`, you're doing dot products:
+
 ```python
 query = [0.1, 0.2, 0.3, ..., 0.5]  # 64 numbers
 key   = [0.4, 0.1, 0.6, ..., 0.2]  # 64 numbers
@@ -183,6 +332,7 @@ score = (0.1 × 0.4) + (0.2 × 0.1) + ... + (0.5 × 0.2)  # 64 terms summed
 With 64 terms, sums can get very large (e.g., -10 to +15).
 
 **Without Scaling Example**:
+
 ```python
 # Scores before scaling
 attn_scores = [[ 8.2, -3.1,  5.7, -2.5],
@@ -195,11 +345,13 @@ softmax(attn_scores[0]) = [0.9999, 0.0000, 0.0001, 0.0000]
 ```
 
 **Problem**: Almost all weight goes to the highest score!
+
 - Token 0 gets 99.99% attention
 - Other tokens get ~0%
 - Gradients vanish → can't learn
 
 **With Scaling**:
+
 ```python
 # Divide by sqrt(64) = 8
 scaled_scores = attn_scores / 8
@@ -213,6 +365,7 @@ softmax(scaled_scores[0]) = [0.39, 0.09, 0.28, 0.10]
 ```
 
 **Better!** Attention is distributed across multiple tokens:
+
 - Token 0: 39% attention
 - Token 2: 28% attention
 - Token 3: 10% attention
@@ -227,6 +380,7 @@ softmax(scaled_scores[0]) = [0.39, 0.09, 0.28, 0.10]
 **Formula**: `softmax(x_i) = exp(x_i) / sum(exp(x_j) for all j)`
 
 **Step-by-Step Example**:
+
 ```python
 scores = [1.0, 0.5, 0.2, 0.8]
 
@@ -247,14 +401,17 @@ weights = [2.718/7.814, 1.649/7.814, 1.221/7.814, 2.226/7.814]
 **Why Exponentiate?**
 
 1. **Always positive**: `e^x > 0` even when x is negative
+
    - Negative scores become small positive probabilities
 
 2. **Emphasizes differences**: Higher scores get proportionally more weight
+
    - Score difference of 1.0 → ~2.7x more weight after softmax
 
 3. **Smooth distribution**: Unlike "max" (winner-takes-all), softmax gives some weight to all tokens
 
 **Complete Example with Real Numbers**:
+
 ```python
 import torch
 
@@ -284,6 +441,7 @@ attn_weights = torch.softmax(scaled_scores, dim=-1)
 ```
 
 **Interpretation**: The query token will:
+
 - Pay **33.4%** attention to Token 3 (highest compatibility)
 - Pay **23.8%** attention to Token 1
 - Pay **22.9%** attention to Token 0
@@ -292,30 +450,36 @@ attn_weights = torch.softmax(scaled_scores, dim=-1)
 ##### Why This Matters for Training
 
 **Without Scaling** (Bad):
+
 ```
 Attention weights: [0.99, 0.00, 0.01, 0.00]
                       ↓
 Gradient for Token 1: ~0.00  (vanishes!)
 ```
+
 Model can't learn to use Token 1.
 
 **With Scaling** (Good):
+
 ```
 Attention weights: [0.35, 0.25, 0.20, 0.20]
                       ↓
 Gradient for Token 1: ~0.25  (healthy!)
 ```
+
 Model can learn to adjust attention to all relevant tokens.
 
 ##### Summary of Step 3
 
 **Scaling by √d_out**:
+
 - Prevents extreme attention scores
 - Maintains gradient flow during training
 - Formula: `scores / sqrt(d_out)`
 - Example: With d_out=64, divide by 8
 
 **Softmax**:
+
 - Converts scores → probabilities (0 to 1, sum to 1)
 - Ensures all weights are positive
 - Preserves relative importance (higher score → higher weight)
@@ -612,7 +776,7 @@ raschka-build-llm-from-scratch-learning-journey/
 │   ├── tokenizer.py          # SimpleTokenizer (Ch 2)
 │   ├── bpe_tokenizer.py      # BPE tokenization (Ch 2)
 │   ├── dataloader.py         # GPTDatasetV1 (Ch 2)
-│   ├── self_attention.py     # SelfAttention_v1 (Ch 3) ← NEW
+│   ├── self_attention.py     # SelfAttention_v1 & v2 (Ch 3) ← NEW
 │   └── __init__.py
 ├── CHAPTER_2_SUMMARY.md      # Chapter 2 summary
 ├── CHAPTER_3_SUMMARY.md      # This file
@@ -632,14 +796,4 @@ raschka-build-llm-from-scratch-learning-journey/
 6. **All parameters** are learned during training
 7. This is the **core mechanism** that makes transformers powerful
 
-The self-attention mechanism you've implemented is the fundamental building block that powers GPT, BERT, and all modern transformer models!
-
----
-
-## Next Steps: Multi-Head Attention & Transformer Blocks
-
-We'll extend this single attention head into:
-
-- Multiple parallel attention heads
-- Complete transformer blocks with normalization and feed-forward layers
-- Causal masking for autoregressive generation
+The self-attention mechanism is the fundamental building block that powers GPT, BERT, and all modern transformer models!
