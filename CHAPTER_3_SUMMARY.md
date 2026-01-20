@@ -797,3 +797,52 @@ raschka-build-llm-from-scratch-learning-journey/
 7. This is the **core mechanism** that makes transformers powerful
 
 The self-attention mechanism is the fundamental building block that powers GPT, BERT, and all modern transformer models!
+
+---
+
+## Additional Learning Resources
+
+### Interactive Concept Demos
+
+For hands-on exploration of key concepts covered in this chapter, see:
+
+**[notes/concepts/](notes/concepts/)** - Interactive learning modules with explanations and runnable demos
+
+#### Available Concepts:
+
+1. **Understanding transpose(1, 2) in Multi-Head Attention**
+   - 📝 Theory: [transpose_explanation.md](notes/concepts/transpose_explanation.md)
+   - 🐍 Demo: [transpose_demo.py](notes/concepts/transpose_demo.py)
+   - **What it covers**: Why tensor reshaping is crucial for parallel processing of attention heads
+   - **Run it**: `python notes/concepts/transpose_demo.py`
+
+These concept modules complement the summary with:
+- Visual explanations and concrete examples
+- Runnable Python code to see concepts in action
+- Detailed breakdowns of complex operations
+- Side-by-side comparisons (before/after)
+
+### How to Use
+
+1. **Read this summary** to understand the theory
+2. **Run the demos** to see concepts in action:
+   ```bash
+   cd raschka-build-llm-from-scratch-learning-journey
+   python notes/concepts/transpose_demo.py
+   ```
+3. **Experiment** by modifying the demo code
+4. **Refer back** to the concept notes when you forget details
+
+---
+
+## What's Implemented
+
+### Core Attention Classes
+
+All implemented in [src/raschka_llm/self_attention.py](src/raschka_llm/self_attention.py):
+
+- ✅ `SelfAttention_v1` - Basic implementation with `nn.Parameter`
+- ✅ `SelfAttention_v2` - Production version with `nn.Linear`
+- ✅ `CausalAttention` - Masked attention for autoregressive models
+- ✅ `MultiHeadAttentionWrapper` - Simple multi-head implementation (educational)
+- ✅ `MultiHeadAttention` - Efficient multi-head implementation (production)

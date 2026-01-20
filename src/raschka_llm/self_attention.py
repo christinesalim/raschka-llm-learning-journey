@@ -379,6 +379,170 @@ class MultiHeadAttentionWrapper(nn.Module):
         # [head(x) for head in self.heads] creates a list of outputs
         # torch.cat(..., dim=-1) concatenates along the feature dimension
         return torch.cat([head(x) for head in self.heads], dim=-1)
+    
+    
+class MultiHeadAttention(nn.Module):
+    """Efficient multi-head attention implementation used in production transformers.
+
+    This is the standard implementation used in models like GPT and BERT. Instead of
+    creating separate attention modules for each head (like MultiHeadAttentionWrapper),
+    this implementation:
+    1. Projects input to a large Q/K/V space (size d_out)
+    2. Splits the projection into num_heads smaller subspaces
+    3. Computes attention for all heads in parallel
+    4. Combines heads with an output projection
+
+    This approach is more memory and compute efficient than using separate modules.
+
+    Key differences from MultiHeadAttentionWrapper:
+    - Single large Q/K/V projection (d_in -> d_out) instead of num_heads small ones
+    - Splits d_out into num_heads of size head_dim each
+    - Processes all heads in parallel using tensor reshaping
+    - Adds output projection layer to combine heads
+    - Much more memory and compute efficient
+
+    Args:
+        d_in: Input embedding dimension
+        d_out: Total output dimension (must be divisible by num_heads)
+        context_length: Maximum sequence length for causal masking
+        dropout: Dropout probability for attention weights
+        num_heads: Number of attention heads
+        qkv_bias: Whether to include bias in Q, K, V projections
+
+    Example:
+        >>> # 8 heads * 64 features per head = 512 total output dimension
+        >>> mha = MultiHeadAttention(d_in=512, d_out=512,
+        ...                          context_length=1024, dropout=0.1,
+        ...                          num_heads=8)
+        >>> x = torch.randn(4, 50, 512)  # [batch, seq_len, d_in]
+        >>> output = mha(x)  # [4, 50, 512]
+    """
+
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+        """Initialize efficient multi-head attention.
+
+        Creates single large Q/K/V projections that will be split into multiple heads,
+        plus an output projection to combine the heads after attention.
+
+        Args:
+            d_in: Dimension of input embeddings
+            d_out: Total output dimension (split across all heads)
+            context_length: Maximum sequence length for causal masking
+            dropout: Dropout rate for attention weights
+            num_heads: Number of parallel attention heads
+            qkv_bias: If True, add learnable bias to Q, K, V projections
+
+        Raises:
+            AssertionError: If d_out is not divisible by num_heads
+        """
+        super().__init__()
+
+        # Ensure d_out can be evenly split across heads
+        assert (d_out % num_heads == 0), \
+            "d_out must be divisible by num_heads"
+
+        self.d_out = d_out
+        self.num_heads = num_heads
+        # Each head processes a slice of size head_dim from the d_out projection
+        self.head_dim = d_out // num_heads  # e.g., 512 / 8 = 64 per head
+
+        # Single large projections (more efficient than separate projections per head)
+        # These project d_in -> d_out, then we'll split d_out into num_heads
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+        # Output projection to combine information from all heads
+        # This is crucial for allowing heads to interact and share information
+        self.out_proj = nn.Linear(d_out, d_out)
+
+        self.dropout = nn.Dropout(dropout)
+
+        # Register causal mask as a buffer (same as CausalAttention)
+        self.register_buffer(
+            "mask",
+            torch.triu(torch.ones(context_length, context_length),
+                       diagonal=1)
+        )
+
+    def forward(self, x):
+        """Compute multi-head attention efficiently.
+
+        Steps:
+            1. Project input to Q, K, V (shape: [batch, seq_len, d_out])
+            2. Reshape to split into heads (shape: [batch, seq_len, num_heads, head_dim])
+            3. Transpose for parallel processing (shape: [batch, num_heads, seq_len, head_dim])
+            4. Compute attention scores for all heads in parallel
+            5. Apply causal mask and softmax
+            6. Apply dropout and compute context vectors
+            7. Reshape to merge heads back together
+            8. Apply output projection
+
+        Args:
+            x: Input tensor of shape [batch_size, num_tokens, d_in]
+
+        Returns:
+            Context vectors of shape [batch_size, num_tokens, d_out]
+            with information from all attention heads combined
+        """
+        # Extract dimensions
+        b, num_tokens, d_in = x.shape
+
+        # Step 1: Project inputs to queries, keys, and values
+        # Shape: [batch_size, num_tokens, d_out]
+        keys = self.W_key(x)
+        queries = self.W_query(x)
+        values = self.W_value(x)
+
+        # Step 2: Reshape to split d_out into (num_heads, head_dim)
+        # Before view(): self.W_keys(x) has shape [b, num_tokens, d_out]
+        # view() creates the multiple "heads" by reshaping the last dimension
+        # Shape: [batch_size, num_tokens, num_heads, head_dim]
+        keys = keys.view(b, num_tokens, self.num_heads, self.head_dim)
+        values = values.view(b, num_tokens, self.num_heads, self.head_dim)
+        queries = queries.view(b, num_tokens, self.num_heads, self.head_dim)
+
+        # Step 3: Transpose to bring heads dimension before sequence dimension
+        # This allows us to process all heads in parallel using batch operations
+        # Shape: [batch_size, num_heads, num_tokens, head_dim]
+        keys = keys.transpose(1, 2)
+        queries = queries.transpose(1, 2)
+        values = values.transpose(1, 2)
+
+        # Step 4: Compute attention scores for all heads in parallel
+        # keys.transpose(2,3) swaps num_tokens and head_dim dimensions
+        # Shape: [batch_size, num_heads, num_tokens, num_tokens]
+        attn_scores = queries @ keys.transpose(2, 3)
+
+        # Step 5: Apply causal mask to prevent attending to future tokens
+        # Slice mask to match current sequence length
+        mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
+        attn_scores.masked_fill_(mask_bool, -torch.inf)
+
+        # Step 6: Scale and apply softmax to get attention weights
+        # Scaling by sqrt(head_dim) for numerical stability
+        # Shape: [batch_size, num_heads, num_tokens, num_tokens]
+        attn_weights = torch.softmax(
+            attn_scores / keys.shape[-1]**0.5, dim=-1
+        )
+        attn_weights = self.dropout(attn_weights)
+
+        # Step 7: Compute context vectors and transpose back
+        # (attn_weights @ values): [batch, num_heads, num_tokens, head_dim]
+        # After transpose: [batch, num_tokens, num_heads, head_dim]
+        context_vec = (attn_weights @ values).transpose(1, 2)
+
+        # Step 8: Merge all heads back together
+        # contiguous() ensures tensor is stored contiguously in memory (required for view)
+        # view() reshapes from [batch, num_tokens, num_heads, head_dim]
+        #              back to [batch, num_tokens, d_out]
+        context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
+
+        # Step 9: Apply output projection to combine information from all heads
+        # This allows the heads to interact and integrate their different perspectives
+        context_vec = self.out_proj(context_vec)
+        return context_vec
+        
 
 if __name__ == "__main__":
     # Example usage
@@ -465,3 +629,25 @@ if __name__ == "__main__":
     print (batch)
     print(context_vecs)
     print("context_vecs.shape:", context_vecs.shape)
+    
+    #MultiheadAttention
+    torch.manual_seed(123)
+    batch_size, context_length, d_in = batch.shape
+    d_out = 2
+    mha = MultiHeadAttention(d_in, d_out, context_length, 0.0, num_heads=2)
+    context_length = mha(batch)
+    print(context_vecs)
+    print("context_vecs.shape:", context_vecs.shape)
+    
+        
+    #Exercise 3.3: count size of multi-head attention module 
+    torch.manual_seed(123)
+    context_length = 1024
+    d_in, d_out = 768, 768
+    num_heads = 12
+
+    mha = MultiHeadAttention(d_in, d_out, context_length, 0.0, num_heads)
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(count_parameters(mha))
