@@ -26,3 +26,9 @@ data/*.bin
 # Editor
 .vscode/
 .idea/
+
+# macOS
+.DS_Store
+
+# LinkedIn posts (draft content, not part of codebase)
+notes/LinkedIn/

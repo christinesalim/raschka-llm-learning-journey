@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import tiktoken
 
+# Import from same package - works when run directly or as module
+try:
+    from .self_attention import MultiHeadAttention
+except ImportError:
+    # Fallback for running file directly
+    from self_attention import MultiHeadAttention
+
 #This configuration has 124 million parameters - it matches GPT-2's smallest model
 GPT_CONFIG_124M = {
     "vocab_size": 50257,    # Vocabulary size (number of unique tokens)
@@ -361,21 +368,53 @@ def print_gradients(model, x):
             print(f"{name} has gradient mean of {param.grad.abs().mean().item()}")
             
 
-layer_sizes = [3, 3, 3, 3, 3, 1]  
+class TransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = MultiHeadAttention(
+            d_in=cfg["emb_dim"],
+            d_out=cfg["emb_dim"],
+            context_length=cfg["context_length"],
+            num_heads=cfg["n_heads"],
+            dropout=cfg["drop_rate"],
+            qkv_bias=cfg["qkv_bias"]
+        )
+        self.ff = FeedForward(cfg)
+        self.norm1 = LayerNorm(cfg["emb_dim"])
+        self.norm2 = LayerNorm(cfg["emb_dim"])
+        self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
+        
+    def forward(self, x):
+        # First sub-layer: Multi-head attention with residual
+        shortcut = x
+        x = self.norm1(x)
+        x = self.att(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut  # Residual connection 1
 
-sample_input = torch.tensor([[1., 0., -1.]])
-
-torch.manual_seed(123)
-#Vanishing gradients as we progress to each layer
-model_without_shortcut = ExampleDeepNeuralNetwork(
-    layer_sizes, use_shortcut=False
-)
-print_gradients(model_without_shortcut, sample_input)
-
+        # Second sub-layer: Feed-forward with residual
+        shortcut = x
+        x = self.norm2(x)
+        x = self.ff(x)  # Missing feed-forward call!
+        x = self.drop_shortcut(x)
+        x = x + shortcut  # Residual connection 2
+        return x
 
 
-torch.manual_seed(123)
-model_with_shortcut = ExampleDeepNeuralNetwork(
-    layer_sizes, use_shortcut=True
-)
-print_gradients(model_with_shortcut, sample_input)
+# Test code - only runs when file is executed directly
+if __name__ == "__main__":
+    layer_sizes = [3, 3, 3, 3, 3, 1]
+    sample_input = torch.tensor([[1., 0., -1.]])
+
+    torch.manual_seed(123)
+    # Vanishing gradients as we progress to each layer
+    model_without_shortcut = ExampleDeepNeuralNetwork(
+        layer_sizes, use_shortcut=False
+    )
+    print_gradients(model_without_shortcut, sample_input)
+
+    torch.manual_seed(123)
+    model_with_shortcut = ExampleDeepNeuralNetwork(
+        layer_sizes, use_shortcut=True
+    )
+    print_gradients(model_with_shortcut, sample_input)

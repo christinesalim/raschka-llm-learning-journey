@@ -11,6 +11,7 @@ This is a learning repository following Sebastian Raschka's "Build a Large Langu
 ## Development Commands
 
 ### Package Installation
+
 ```bash
 # Install package in editable mode (recommended for development)
 pip install -e .
@@ -20,6 +21,7 @@ pip install -e ".[dev]"
 ```
 
 ### Running Tests
+
 ```bash
 # Run all tests
 pytest
@@ -38,6 +40,7 @@ pytest -s
 ```
 
 ### Code Quality
+
 ```bash
 # Format code with black
 black src/ tests/
@@ -55,14 +58,17 @@ pre-commit run --all-files
 ## Architecture & Code Organization
 
 ### Module Structure
+
 The codebase builds components progressively by chapter:
 
 - **Chapter 2**: Tokenization and data loading
+
   - `tokenizer.py`: SimpleTokenizer (educational), build_vocab_from_text()
   - `bpe_tokenizer.py`: BPE tokenization with tiktoken (production)
   - `dataloader.py`: GPTDatasetV1, create_dataloader_v1() for sliding window batching
 
 - **Chapter 3**: Self-attention mechanisms
+
   - `self_attention.py`: Contains multiple attention implementations
     - `SelfAttention_v1`: Basic with nn.Parameter (educational)
     - `SelfAttention_v2`: Production with nn.Linear
@@ -75,18 +81,23 @@ The codebase builds components progressively by chapter:
   - `text_generator.py`: Text generation utilities
 
 ### Version Naming Convention
+
 Classes often have `_v1`, `_v2` suffixes:
+
 - `v1`: Educational implementation showing the concept clearly
 - `v2` or no suffix: Production-ready implementation with best practices
 - Both versions are kept to show progression and aid learning
 
 ### Public API (\_\_init\_\_.py)
+
 The `src/raschka_llm/__init__.py` file defines the public API. When adding new modules:
+
 1. Import the new classes/functions
 2. Add them to `__all__` list
 3. This enables clean imports: `from raschka_llm import GPTModel`
 
 ### Data Pipeline
+
 ```
 Text File → Tokenizer → Token IDs → DataLoader (sliding window) →
 Embeddings (token + position) → Attention Layers → Model
@@ -95,7 +106,9 @@ Embeddings (token + position) → Attention Layers → Model
 Key insight: The dataloader creates (input, target) pairs where target is input shifted by 1 position, enabling next-token prediction training.
 
 ### Attention Architecture Patterns
+
 All attention modules follow this pattern:
+
 1. Project input to Q, K, V using nn.Linear
 2. Reshape/transpose for multi-head processing (if applicable)
 3. Compute attention scores: queries @ keys.T
@@ -110,15 +123,18 @@ The `transpose(1, 2)` operation in MultiHeadAttention reorganizes from `[batch, 
 ## Working with Chapters
 
 ### Adding Code from Raschka's Source
+
 When working through a chapter (referencing code from LLMs-from-scratch repo):
 
 1. **Write directly in src/**: Implement components in the appropriate module
 2. **Write tests**: Create corresponding test file to validate
 3. **Update \_\_init\_\_.py**: Export new components
-4. **Document**: Update or create CHAPTER_*_SUMMARY.md after understanding the concepts
+4. **Document**: Update or create CHAPTER\_\*\_SUMMARY.md after understanding the concepts
 
 ### Chapter Summary Files
+
 Each completed chapter has a `CHAPTER_N_SUMMARY.md` at the project root containing:
+
 - Conceptual explanations of what was learned
 - Code examples with detailed comments
 - Visual diagrams and step-by-step breakdowns
@@ -128,19 +144,28 @@ Each completed chapter has a `CHAPTER_N_SUMMARY.md` at the project root containi
 These summaries are teaching documents, not API references. They explain the "why" behind implementations.
 
 ### Interactive Concept Demos
+
 The `notes/concepts/` directory contains standalone demos for complex topics:
+
 - Each concept has a `.md` explanation and `.py` demo script
 - Current examples: `transpose_demo.py`, `transpose_explanation.md`
 - Pattern: Create these when a concept needs deeper exploration than inline comments provide
 
+### LinkedIn posts
+
+- Past posts on LinkedIn are in `notes/LinkedIn`. Posts have a written markdown file and an svg image
+- Number posts to track them
+
 ## Testing Patterns
 
 ### Test File Organization
+
 - Test files mirror src/ structure: `test_tokenizer.py` tests `tokenizer.py`
 - Path handling: Tests add parent/src to sys.path to import modules
 - File fixtures: Tests expect `data/sample.txt` and may download `data/the-verdict.txt`
 
 ### Test Naming
+
 - `test_<component>`: Test a specific component or function
 - `test_<component>_<scenario>`: Test a specific scenario
 - Example: `test_tokenizer_encode_decode`, `test_build_vocab_from_file`
@@ -148,34 +173,67 @@ The `notes/concepts/` directory contains standalone demos for complex topics:
 ## Important Implementation Details
 
 ### Embeddings
+
 Token embeddings (`nn.Embedding`) are lookup tables that convert token IDs to dense vectors. Position embeddings add location information. Both are learned during training and combined via element-wise addition.
 
 ### Causal Masking
+
 Autoregressive models use causal masking to prevent tokens from attending to future positions:
+
 - `torch.triu(..., diagonal=1)` creates upper triangular mask
 - Positions to mask are filled with `-torch.inf`
 - Softmax converts -inf to 0 probability
 - Mask is registered as a buffer (not a parameter) via `register_buffer()`
 
 ### Dropout in Attention
+
 Dropout is applied to attention weights (not inputs/outputs) for regularization. It's only active during training (automatically disabled in eval mode).
 
 ### Tensor Shapes Reference
+
 Common shapes throughout the codebase:
+
 - Embeddings: `[batch, seq_len, d_model]`
 - Attention scores: `[batch, (heads), seq_len, seq_len]`
 - Multi-head before transpose: `[batch, seq_len, num_heads, head_dim]`
 - Multi-head after transpose: `[batch, num_heads, seq_len, head_dim]`
 
 ## Data Files
+
 - `data/sample.txt`: Small test file (committed)
 - `data/the-verdict.txt`: Training data (downloaded by tests if missing)
-- Large data files (*.pt, *.bin) are gitignored
+- Large data files (_.pt, _.bin) are gitignored
 
 ## Pre-commit Hooks
+
 The repository uses pre-commit hooks for code quality:
+
 - black: Code formatting
 - isort: Import sorting
 - flake8: Linting
 
 Hooks run automatically on commit. To bypass (not recommended): `git commit --no-verify`
+
+## Git Commit Style
+
+When creating commits, follow this format:
+
+```
+Brief summary in imperative mood (50 chars or less)
+
+- Bullet point describing first change
+- Bullet point describing second change
+- Bullet point describing third change
+```
+
+**Important**: Do NOT add "Co-Authored-By: Claude" or similar attribution lines to commits. Keep commit messages clean and focused on the changes.
+
+## Learning Approach
+
+The user is learning Python while building this LLM from scratch. They have Java background, so:
+
+- **Explain advanced Python concepts proactively** when they appear in code
+- **Quiz on Python basics** periodically to reinforce learning
+- **Compare to Java** when relevant (e.g., `super()` vs Java's `super()`)
+- **Focus on Pythonic idioms** - help write idiomatic Python, not Java-style Python
+- **Ask questions to check understanding** before moving to next concept
