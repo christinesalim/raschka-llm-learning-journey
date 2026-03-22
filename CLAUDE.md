@@ -155,6 +155,7 @@ The `notes/concepts/` directory contains standalone demos for complex topics:
 
 - Past posts on LinkedIn are in `notes/LinkedIn`. Posts have a written markdown file and an svg image
 - Number posts to track them
+- Always include link to GitHub repository: https://github.com/christinesalim/raschka-llm-learning-journey
 
 ## Testing Patterns
 

@@ -16,6 +16,25 @@ Understanding `transpose(1, 2)` and why it's crucial for parallel processing of 
 python transpose_demo.py
 ```
 
+### 2. Weight Tying and PyTorch Internal Weights
+
+Understanding how PyTorch manages weight matrices internally and how weight tying works in GPT models.
+
+- **Theory**: [weight_tying_explanation.md](weight_tying_explanation.md)
+- **Demo**: [weight_tying_demo.py](weight_tying_demo.py)
+
+**Quick start:**
+```bash
+python weight_tying_demo.py
+```
+
+**Key concepts**:
+- Where PyTorch stores weight matrices (`.weight` attributes)
+- How `nn.Embedding` and `nn.Linear` create weights automatically
+- Weight tying: sharing one matrix between two layers
+- Parameter reduction: 163M → 124M parameters
+- Memory sharing proof: same `id()` after tying
+
 ---
 
 ## How to Use This Directory
