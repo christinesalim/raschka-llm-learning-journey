@@ -151,12 +151,6 @@ The `notes/concepts/` directory contains standalone demos for complex topics:
 - Current examples: `transpose_demo.py`, `transpose_explanation.md`
 - Pattern: Create these when a concept needs deeper exploration than inline comments provide
 
-### LinkedIn posts
-
-- Past posts on LinkedIn are in `notes/LinkedIn`. Posts have a written markdown file and an svg image
-- Number posts to track them
-- Always include link to GitHub repository: https://github.com/christinesalim/raschka-llm-learning-journey
-
 ## Testing Patterns
 
 ### Test File Organization
@@ -229,12 +223,6 @@ Brief summary in imperative mood (50 chars or less)
 
 **Important**: Do NOT add "Co-Authored-By: Claude" or similar attribution lines to commits. Keep commit messages clean and focused on the changes.
 
-## Learning Approach
+## Personal Preferences
 
-The user is learning Python while building this LLM from scratch. They have Java background, so:
-
-- **Explain advanced Python concepts proactively** when they appear in code
-- **Quiz on Python basics** periodically to reinforce learning
-- **Compare to Java** when relevant (e.g., `super()` vs Java's `super()`)
-- **Focus on Pythonic idioms** - help write idiomatic Python, not Java-style Python
-- **Ask questions to check understanding** before moving to next concept
+@~/.claude/raschka-llm-notes.md
