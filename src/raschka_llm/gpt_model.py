@@ -1,3 +1,38 @@
+"""
+GPT Model Implementation
+
+ENVIRONMENT SETUP REMINDER:
+---------------------------
+If you get "ModuleNotFoundError: No module named 'torch'":
+
+1. Check which Python you're using:
+   which python
+
+2. If it shows .venv/bin/python, install dependencies:
+   pip install -r requirements.txt
+
+3. If VSCode isn't using .venv:
+   - Cmd+Shift+P → "Python: Select Interpreter"
+   - Choose: .venv/bin/python
+
+4. Verify installation:
+   python -c "import torch; print(torch.__version__)"
+
+The .venv (virtual environment) keeps this project's dependencies isolated.
+
+MEMORY TIP:
+-----------
+To remember what total_params means:
+- total_params = sum(p.numel() for p in model.parameters())
+- Counts every trainable number (weight/bias) in the model
+- For FeedForward (768→3072→768):
+  * Layer 1: (3072×768) weights + 3072 bias = 2,362,368 params
+  * Layer 2: (768×3072) weights + 768 bias = 2,360,064 params
+  * Total: 4,722,432 parameters in ONE feedforward block
+- GPT-124M has 12 blocks × 4.7M ≈ 56M params just in feedforward!
+- Each param is 4 bytes (float32) → multiply by 4 to get MB
+"""
+
 import torch
 import torch.nn as nn
 import tiktoken
@@ -610,6 +645,122 @@ class GPTModel(nn.Module):
         logits = self.out_head(x)
 
         return logits
+    
+def generate_text_simple(model, idx, max_new_tokens, context_size):
+    """
+    Generate new tokens one at a time using the GPT model.
+
+    This function implements autoregressive text generation:
+    - Start with some initial tokens (prompt)
+    - Predict the next token
+    - Add it to the sequence
+    - Repeat
+
+    Args:
+        model: The GPT model to use for generation
+        idx: Starting token IDs, shape (batch_size, seq_len)
+             Example: tensor([[15496, 11, 616]]) = "Hello, I"
+        max_new_tokens: How many new tokens to generate
+        context_size: Maximum context length the model can handle (e.g., 1024)
+
+    Returns:
+        idx: Extended sequence with generated tokens, shape (batch_size, seq_len + max_new_tokens)
+
+    INDEXING EXPLAINED:
+    -------------------
+    idx[:, -context_size:]  → Takes last N tokens
+        : = all batches
+        -context_size: = last 'context_size' tokens
+        Example: if idx has 2000 tokens but context_size=1024,
+                 this takes tokens [976:2000] (the last 1024)
+
+    logits[:, -1, :]  → Gets predictions for the LAST token position
+        : = all batches
+        -1 = last position in sequence
+        : = all vocabulary scores (50,257 values)
+        Example shape: (batch_size, vocab_size) = (2, 50257)
+
+    torch.argmax(..., dim=-1, keepdim=True)  → Picks token with highest score
+        dim=-1 = across vocabulary dimension
+        keepdim=True = keep as shape (batch, 1) instead of (batch,)
+
+    torch.cat((idx, idx_next), dim=1)  → Append new token to sequence
+        dim=1 = concatenate along sequence dimension
+        idx: (batch, seq_len) + idx_next: (batch, 1) → (batch, seq_len+1)
+    """
+    # Generate max_new_tokens tokens, one at a time
+    for _ in range(max_new_tokens):
+
+        # STEP 1: Crop context if sequence is too long
+        # idx[:, -context_size:] means "take last context_size tokens from all batches"
+        #
+        # Why? The model can only handle up to context_size tokens (e.g., 1024)
+        # If we've generated 2000 tokens, we can only use the last 1024
+        #
+        # Example:
+        #   idx shape: (2, 2000) - 2 sequences, each with 2000 tokens
+        #   idx[:, -1024:] → (2, 1024) - last 1024 tokens from each sequence
+        idx_cond = idx[:, -context_size:]
+
+        # STEP 2: Get model predictions (no gradient needed for generation)
+        # with torch.no_grad() saves memory - we're not training, just inferring
+        with torch.no_grad():
+            # logits shape: (batch_size, seq_len, vocab_size)
+            # Example: (2, 1024, 50257) - scores for next token at each position
+            logits = model(idx_cond)
+
+        # STEP 3: Extract predictions for the LAST position only
+        # logits[:, -1, :] means "from all batches, take the last position, all vocab scores"
+        #
+        # Why -1? The model predicts the NEXT token after each position.
+        # We only care about what comes after the last token.
+        #
+        # Before: (batch, seq_len, vocab_size) = (2, 1024, 50257)
+        # After:  (batch, vocab_size) = (2, 50257)
+        #
+        # Indexing breakdown:
+        #   [:, -1, :]
+        #   │   │   └── all 50,257 vocabulary scores
+        #   │   └────── last position in sequence (position 1023 if seq_len=1024)
+        #   └────────── all batches
+        logits = logits[:, -1, :]
+
+        # STEP 4: Convert logits to probabilities using softmax
+        # Softmax turns raw scores into probabilities that sum to 1.0
+        # dim=-1 means normalize across the vocabulary dimension
+        # Shape stays: (batch_size, vocab_size) = (2, 50257)
+        probas = torch.softmax(logits, dim=-1)
+
+        # STEP 5: Pick the token with highest probability (greedy decoding)
+        # torch.argmax finds the index of the maximum value
+        #
+        # dim=-1: find max across vocabulary dimension
+        # keepdim=True: keep shape as (batch, 1) instead of (batch,)
+        #
+        # Example:
+        #   probas = [[0.01, 0.02, 0.95, 0.02], [0.3, 0.6, 0.05, 0.05]]
+        #   argmax →  [[2], [1]]  ← indices of highest probabilities
+        #
+        # Shape: (batch_size, 1) = (2, 1)
+        idx_next = torch.argmax(probas, dim=-1, keepdim=True)
+
+        # STEP 6: Append the new token to the sequence
+        # torch.cat concatenates tensors along a dimension
+        # dim=1 means concatenate along the sequence dimension
+        #
+        # Before:
+        #   idx:      (batch, seq_len)   = (2, 4)  = [[15496, 11, 616, 13], ...]
+        #   idx_next: (batch, 1)         = (2, 1)  = [[345], [42]]
+        # After:
+        #   idx:      (batch, seq_len+1) = (2, 5)  = [[15496, 11, 616, 13, 345], ...]
+        #
+        # Now the sequence is 1 token longer!
+        idx = torch.cat((idx, idx_next), dim=1)
+
+    # After the loop, we've added max_new_tokens to the original sequence
+    # Return the full sequence including both original and generated tokens
+    return idx
+
 
 # Test code - only runs when file is executed directly
 if __name__ == "__main__":
@@ -652,3 +803,27 @@ if __name__ == "__main__":
     print(f"Number of trainable parameters "
           f"considering weight tying: {total_params_gpt2:,}")
     
+    total_size_bytes = total_params * 4
+    total_size_mb = total_size_bytes / (1024 * 1024)
+    print(f"Total size of the model in bytes: {total_size_mb:.2f} MB")
+    
+    #Test the generate_text_simple function
+    start_context = "Hello, I am"
+    encoded = tokenizer.encode(start_context)
+    print("encoded:", encoded)
+    #Add batch dimension at position 0 since GPT model expects input shape (batch_size, seq_len)
+    encoded_tensor = torch.tensor(encoded).unsqueeze(0) 
+    print("encoded_tensor.shape:", encoded_tensor.shape)
+    
+    model.eval()
+    out = generate_text_simple(
+        model=model,
+        idx=encoded_tensor,
+        max_new_tokens=6,
+        context_size=GPT_CONFIG_124M["context_length"]
+    )
+    
+    print("Output:", out)
+    print("Output length:", len(out[0]))
+    decoded_text = tokenizer.decode(out.squeeze(0).tolist())
+    print(decoded_text)
